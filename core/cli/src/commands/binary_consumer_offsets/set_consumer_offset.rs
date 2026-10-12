@@ -51,14 +51,26 @@ impl SetConsumerOffsetCmd {
             offset,
         }
     }
+
+    pub fn get_consumer_info(&self) -> String {
+        match self.consumer.kind {
+            ConsumerKind::Consumer => format!("consumer with ID: {}", self.consumer.id),
+            ConsumerKind::ConsumerGroup => format!("consumer group with ID: {}", self.consumer.id),
+            ConsumerKind::ExternalGroup => format!("external group with ID: {}", self.consumer.id),
+        }
+    }
 }
 
 #[async_trait]
 impl CliCommand for SetConsumerOffsetCmd {
     fn explain(&self) -> String {
         format!(
-            "set consumer offset for consumer with ID: {} for stream with ID: {} and topic with ID: {} and partition with ID: {} to {}",
-            self.consumer.id, self.stream_id, self.topic_id, self.partition_id, self.offset,
+            "set consumer offset for {} for stream with ID: {} and topic with ID: {} and partition with ID: {} to {}",
+            self.get_consumer_info(),
+            self.stream_id,
+            self.topic_id,
+            self.partition_id,
+            self.offset,
         )
     }
 
@@ -68,14 +80,14 @@ impl CliCommand for SetConsumerOffsetCmd {
             .await
             .with_context(|| {
                 format!(
-                    "Problem setting consumer offset for consumer with ID: {} for stream with ID: {} and topic with ID: {} and partition with ID: {}",
-                    self.consumer.id, self.stream_id, self.topic_id, self.partition_id
+                    "Problem setting consumer offset for {} for stream with ID: {} and topic with ID: {} and partition with ID: {}",
+                    self.get_consumer_info(), self.stream_id, self.topic_id, self.partition_id
                 )
             })?;
 
         event!(target: PRINT_TARGET, Level::INFO,
-            "Consumer offset for consumer with ID: {} for stream with ID: {} and topic with ID: {} and partition with ID: {} set to {}",
-            self.consumer.id,
+            "Consumer offset for {} for stream with ID: {} and topic with ID: {} and partition with ID: {} set to {}",
+            self.get_consumer_info(),
             self.stream_id,
             self.topic_id,
             self.partition_id,

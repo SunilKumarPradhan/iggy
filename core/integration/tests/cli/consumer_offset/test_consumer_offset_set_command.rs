@@ -37,6 +37,7 @@ struct TestConsumerOffsetSetCmd {
     using_consumer_id: TestConsumerId,
     using_stream_id: TestStreamId,
     using_topic_id: TestTopicId,
+    kind: ConsumerKind,
     stored_offset: u64,
 }
 
@@ -53,6 +54,7 @@ impl TestConsumerOffsetSetCmd {
         using_consumer_id: TestConsumerId,
         using_stream_id: TestStreamId,
         using_topic_id: TestTopicId,
+        kind: ConsumerKind,
         stored_offset: u64,
     ) -> Self {
         Self {
@@ -66,6 +68,7 @@ impl TestConsumerOffsetSetCmd {
             using_consumer_id,
             using_stream_id,
             using_topic_id,
+            kind,
             stored_offset,
         }
     }
@@ -88,6 +91,17 @@ impl TestConsumerOffsetSetCmd {
 
         command.push(format!("{}", self.partition_id));
         command.push(format!("{}", self.stored_offset));
+
+        // The default kind is passed implicitly, so that path stays covered.
+        match self.kind {
+            ConsumerKind::Consumer => {}
+            ConsumerKind::ConsumerGroup => {
+                command.extend(["--kind".to_string(), "consumer-group".to_string()]);
+            }
+            ConsumerKind::ExternalGroup => {
+                command.extend(["--kind".to_string(), "external-group".to_string()]);
+            }
+        }
 
         command
     }
@@ -115,6 +129,19 @@ impl IggyCmdTestCase for TestConsumerOffsetSetCmd {
         assert!(topic.is_ok());
         let topic_details = topic.unwrap();
         self.topic_id = topic_details.id;
+
+        if self.kind == ConsumerKind::ExternalGroup {
+            // The CLI addresses the external group by the Iggy consumer group it is keyed by.
+            let group = client
+                .create_consumer_group(
+                    &self.stream_id.try_into().unwrap(),
+                    &self.topic_id.try_into().unwrap(),
+                    &self.consumer_name,
+                )
+                .await;
+            assert!(group.is_ok());
+            self.consumer_id = group.unwrap().id;
+        }
 
         let mut messages = (1..=self.stored_offset + 1)
             .filter_map(|id| IggyMessage::from_str(format!("Test message {id}").as_str()).ok())
@@ -155,14 +182,20 @@ impl IggyCmdTestCase for TestConsumerOffsetSetCmd {
             TestTopicId::Named => self.topic_name.clone(),
         };
 
+        let consumer_info = match self.kind {
+            ConsumerKind::Consumer => format!("consumer with ID: {consumer_id}"),
+            ConsumerKind::ConsumerGroup => format!("consumer group with ID: {consumer_id}"),
+            ConsumerKind::ExternalGroup => format!("external group with ID: {consumer_id}"),
+        };
+
         let message = format!(
-            "Executing set consumer offset for consumer with ID: {} for stream with ID: {} and topic with ID: {} and partition with ID: {} to {}\nConsumer offset for consumer with ID: {} for stream with ID: {} and topic with ID: {} and partition with ID: {} set to {}\n",
-            consumer_id,
+            "Executing set consumer offset for {} for stream with ID: {} and topic with ID: {} and partition with ID: {} to {}\nConsumer offset for {} for stream with ID: {} and topic with ID: {} and partition with ID: {} set to {}\n",
+            consumer_info,
             stream_id,
             topic_id,
             self.partition_id,
             self.stored_offset,
-            consumer_id,
+            consumer_info,
             stream_id,
             topic_id,
             self.partition_id,
@@ -175,11 +208,11 @@ impl IggyCmdTestCase for TestConsumerOffsetSetCmd {
     async fn verify_server_state(&self, client: &dyn Client) {
         let consumer = match self.using_consumer_id {
             TestConsumerId::Numeric => Consumer {
-                kind: ConsumerKind::Consumer,
+                kind: self.kind,
                 id: Identifier::numeric(self.consumer_id).unwrap(),
             },
             TestConsumerId::Named => Consumer {
-                kind: ConsumerKind::Consumer,
+                kind: self.kind,
                 id: Identifier::named(self.consumer_name.as_str()).unwrap(),
             },
         };
@@ -278,6 +311,33 @@ pub async fn should_be_successful() {
                 using_consumer_id,
                 using_stream_id,
                 using_topic_id,
+                ConsumerKind::Consumer,
+                100,
+            ))
+            .await;
+    }
+}
+
+#[tokio::test]
+#[parallel]
+pub async fn should_be_successful_for_external_group() {
+    let mut iggy_cmd_test = IggyCmdTest::default();
+
+    iggy_cmd_test.setup().await;
+    for using_consumer_id in [TestConsumerId::Numeric, TestConsumerId::Named] {
+        iggy_cmd_test
+            .execute_test(TestConsumerOffsetSetCmd::new(
+                1,
+                String::from("consumer"),
+                2,
+                String::from("stream"),
+                3,
+                String::from("topic"),
+                0,
+                using_consumer_id,
+                TestStreamId::Numeric,
+                TestTopicId::Numeric,
+                ConsumerKind::ExternalGroup,
                 100,
             ))
             .await;
